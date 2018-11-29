@@ -5,11 +5,33 @@
 
 #include <mitie/ner_feature_extraction.h>
 #include <mitie/stemmer.h>
+#include <regex>
 
 using namespace dlib;
 
 namespace mitie
 {
+    
+    std::string remove_position(const std::string &word) {
+        std::string s(word);
+        std::regex e("\\b(.*)<[0-9]+>");
+        std::string clean_word = std::regex_replace(s, e, "$1");
+        if (!clean_word.empty()) {
+            return clean_word;
+        }
+        
+        return s;
+    }
+    
+    std::vector<std::string> remove_positions(const std::vector<std::string>& words) { 
+        std::vector<std::string> sentence;
+        for (std::vector<int>::size_type i = 0; i != words.size(); i++) {
+            sentence.push_back(remove_position(words[i]));
+        }
+        
+        return sentence;
+    }
+    
     std::vector<matrix<float,0,1> > sentence_to_feats (
         const total_word_feature_extractor& fe,
         const std::vector<std::string>& sentence
@@ -17,8 +39,9 @@ namespace mitie
     {
         std::vector<matrix<float,0,1> > temp;
         temp.resize(sentence.size());
-        for (unsigned long i = 0; i < sentence.size(); ++i)
-            fe.get_feature_vector(sentence[i], temp[i]);
+        for (unsigned long i = 0; i < sentence.size(); ++i) {
+            fe.get_feature_vector(remove_position(sentence[i]), temp[i]);
+        }
         return temp;
     }
 
@@ -134,6 +157,17 @@ namespace mitie
         return 'A' <= ch && ch <= 'Z';
     }
 
+    
+    int get_word_position(std::string word) {
+        std::smatch sm;
+        std::regex_match(word, sm, std::regex(".*<([0-9]+)>"));
+        if (sm.size() > 1) {
+            return std::stoi(sm[1]);
+        }
+        
+        return 0;
+    }
+    
     inline bool alternating_caps_in_middle (const std::string& word)  
     {
         for (unsigned long i = 1; i < word.size(); ++i)
@@ -161,7 +195,7 @@ namespace mitie
 
         return murmur_hash3_128bit_3(val,12345,5739453);
     }
-
+    
     typedef std::vector<std::pair<dlib::uint32,double> > ner_sample_type;
 
     ner_sample_type extract_ner_chunk_features (
@@ -169,7 +203,10 @@ namespace mitie
         const std::vector<matrix<float,0,1> >& feats,
         const std::pair<unsigned long, unsigned long>& chunk_range
     )
-    {
+{
+        
+        
+//        std::cout << "extract_ner_chunk_features" << endl;
         DLIB_CASSERT(words.size() == feats.size(), "range can't be empty");
         DLIB_CASSERT(chunk_range.first != chunk_range.second, "range can't be empty");
 
@@ -188,102 +225,109 @@ namespace mitie
         matrix<float,0,1> all_sum;
         for (unsigned long i = chunk_range.first; i < chunk_range.second; ++i)
         {
+            int word_position = get_word_position(words[i]);
+            cout << word_position << " | " << words[i] << " | ";
+            std::string current_word = remove_position(words[i]); 
+            cout << current_word << endl;
             all_sum += feats[i];
-            result.push_back(make_feat(shash(words[i],0)));
-            result.push_back(make_feat(shash(stem_word(words[i]),10)));
+            result.push_back(make_feat(shash(current_word,0)));
+            result.push_back(make_feat(shash(stem_word(current_word),10)));
 
-            if (is_caps(words[i]))                      result.push_back(make_feat(ifeat(21)));
-            if (is_all_caps(words[i]))                  
+            if (is_caps(current_word))                      result.push_back(make_feat(ifeat(21)));
+            if (is_all_caps(current_word))                  
             {
                 result.push_back(make_feat(ifeat(22)));
-                if (words[i].size() == 1) result.push_back(make_feat(ifeat(6622)));
-                if (words[i].size() == 2) result.push_back(make_feat(ifeat(6623)));
-                if (words[i].size() == 3) result.push_back(make_feat(ifeat(6624)));
-                if (words[i].size() == 4) result.push_back(make_feat(ifeat(6625)));
+                if (current_word.size() == 1) result.push_back(make_feat(ifeat(6622)));
+                if (current_word.size() == 2) result.push_back(make_feat(ifeat(6623)));
+                if (current_word.size() == 3) result.push_back(make_feat(ifeat(6624)));
+                if (current_word.size() == 4) result.push_back(make_feat(ifeat(6625)));
             }
-            if (contains_numbers(words[i]))             result.push_back(make_feat(ifeat(23)));
-            if (contains_letters(words[i]))             result.push_back(make_feat(ifeat(24)));
-            if (contains_letters_and_numbers(words[i])) result.push_back(make_feat(ifeat(25)));
-            if (is_all_numbers(words[i]))               result.push_back(make_feat(ifeat(26)));
-            if (contains_hyphen(words[i]))              result.push_back(make_feat(ifeat(27)));
-            if (alternating_caps_in_middle(words[i]))   result.push_back(make_feat(ifeat(500)));
-
-            result.push_back(make_feat(prefix(words[i],50)));
-            result.push_back(make_feat(suffix(words[i],51)));
+            if (contains_numbers(current_word))             result.push_back(make_feat(ifeat(23)));
+            if (contains_letters(current_word))             result.push_back(make_feat(ifeat(24)));
+            if (contains_letters_and_numbers(current_word)) result.push_back(make_feat(ifeat(25)));
+            if (is_all_numbers(current_word))               result.push_back(make_feat(ifeat(26)));
+            if (contains_hyphen(current_word))              result.push_back(make_feat(ifeat(27)));
+            if (alternating_caps_in_middle(current_word))   result.push_back(make_feat(ifeat(500)));                      
+            if (word_position) result.push_back(make_feat(ifeat(600 + word_position)));
+            
+            result.push_back(make_feat(prefix(current_word,50)));
+            result.push_back(make_feat(suffix(current_word,51)));
         }
         all_sum /= chunk_range.second-chunk_range.first;
 
-        result.push_back(make_feat(caps_pattern(words, chunk_range)));
+        std::vector<std::string> words_no_positions = remove_positions(words);
+        
+        result.push_back(make_feat(caps_pattern(words_no_positions, chunk_range)));
 
         matrix<float,0,1> first = feats[chunk_range.first];
         matrix<float,0,1> last = feats[chunk_range.second-1];
 
-        result.push_back(make_feat(shash(words[chunk_range.first],1)));
-        result.push_back(make_feat(shash(words[chunk_range.second-1],2)));
-        result.push_back(make_feat(shash(stem_word(words[chunk_range.first]),11)));
-        result.push_back(make_feat(shash(stem_word(words[chunk_range.second-1]),12)));
-        result.push_back(make_feat(prefix(words[chunk_range.first],52)));
-        result.push_back(make_feat(suffix(words[chunk_range.first],53)));
-        result.push_back(make_feat(prefix(words[chunk_range.second-1],54)));
-        result.push_back(make_feat(suffix(words[chunk_range.second-1],55)));
+        result.push_back(make_feat(shash(words_no_positions[chunk_range.first],1)));
+        result.push_back(make_feat(shash(words_no_positions[chunk_range.second-1],2)));
+        result.push_back(make_feat(shash(stem_word(words_no_positions[chunk_range.first]),11)));
+        result.push_back(make_feat(shash(stem_word(words_no_positions[chunk_range.second-1]),12)));
+        result.push_back(make_feat(prefix(words_no_positions[chunk_range.first],52)));
+        result.push_back(make_feat(suffix(words_no_positions[chunk_range.first],53)));
+        result.push_back(make_feat(prefix(words_no_positions[chunk_range.second-1],54)));
+        result.push_back(make_feat(suffix(words_no_positions[chunk_range.second-1],55)));
 
-        if (is_caps(words[chunk_range.first]))                      result.push_back(make_feat(ifeat(27)));
-        if (is_all_caps(words[chunk_range.first]))                  
+        if (is_caps(words_no_positions[chunk_range.first]))                      result.push_back(make_feat(ifeat(27)));
+        if (is_all_caps(words_no_positions[chunk_range.first]))                  
         {
             result.push_back(make_feat(ifeat(28)));
-            if (words[chunk_range.first].size() == 1) result.push_back(make_feat(ifeat(6628)));
-            if (words[chunk_range.first].size() == 2) result.push_back(make_feat(ifeat(6629)));
-            if (words[chunk_range.first].size() == 3) result.push_back(make_feat(ifeat(6630)));
-            if (words[chunk_range.first].size() == 4) result.push_back(make_feat(ifeat(6631)));
+            if (words_no_positions[chunk_range.first].size() == 1) result.push_back(make_feat(ifeat(6628)));
+            if (words_no_positions[chunk_range.first].size() == 2) result.push_back(make_feat(ifeat(6629)));
+            if (words_no_positions[chunk_range.first].size() == 3) result.push_back(make_feat(ifeat(6630)));
+            if (words_no_positions[chunk_range.first].size() == 4) result.push_back(make_feat(ifeat(6631)));
         }
-        if (contains_numbers(words[chunk_range.first]))             result.push_back(make_feat(ifeat(29)));
-        if (contains_letters(words[chunk_range.first]))             result.push_back(make_feat(ifeat(30)));
-        if (contains_letters_and_numbers(words[chunk_range.first])) result.push_back(make_feat(ifeat(31)));
-        if (is_all_numbers(words[chunk_range.first]))               result.push_back(make_feat(ifeat(32)));
-        if (contains_hyphen(words[chunk_range.first]))              result.push_back(make_feat(ifeat(33)));
-        if (alternating_caps_in_middle(words[chunk_range.first]))   result.push_back(make_feat(ifeat(501)));
+        if (contains_numbers(words_no_positions[chunk_range.first]))             result.push_back(make_feat(ifeat(29)));
+        if (contains_letters(words_no_positions[chunk_range.first]))             result.push_back(make_feat(ifeat(30)));
+        if (contains_letters_and_numbers(words_no_positions[chunk_range.first])) result.push_back(make_feat(ifeat(31)));
+        if (is_all_numbers(words_no_positions[chunk_range.first]))               result.push_back(make_feat(ifeat(32)));
+        if (contains_hyphen(words_no_positions[chunk_range.first]))              result.push_back(make_feat(ifeat(33)));
+        if (alternating_caps_in_middle(words_no_positions[chunk_range.first]))   result.push_back(make_feat(ifeat(501)));
 
-        if (is_caps(words[chunk_range.second-1]))                      result.push_back(make_feat(ifeat(34)));
-        if (is_all_caps(words[chunk_range.second-1]))                  
+        if (is_caps(words_no_positions[chunk_range.second-1]))                      result.push_back(make_feat(ifeat(34)));
+        if (is_all_caps(words_no_positions[chunk_range.second-1]))                  
         {
             result.push_back(make_feat(ifeat(35)));
-            if (words[chunk_range.second-1].size() == 1) result.push_back(make_feat(ifeat(6635)));
-            if (words[chunk_range.second-1].size() == 2) result.push_back(make_feat(ifeat(6636)));
-            if (words[chunk_range.second-1].size() == 3) result.push_back(make_feat(ifeat(6637)));
-            if (words[chunk_range.second-1].size() == 4) result.push_back(make_feat(ifeat(6638)));
+            if (words_no_positions[chunk_range.second-1].size() == 1) result.push_back(make_feat(ifeat(6635)));
+            if (words_no_positions[chunk_range.second-1].size() == 2) result.push_back(make_feat(ifeat(6636)));
+            if (words_no_positions[chunk_range.second-1].size() == 3) result.push_back(make_feat(ifeat(6637)));
+            if (words_no_positions[chunk_range.second-1].size() == 4) result.push_back(make_feat(ifeat(6638)));
         }
-        if (contains_numbers(words[chunk_range.second-1]))             result.push_back(make_feat(ifeat(36)));
-        if (contains_letters(words[chunk_range.second-1]))             result.push_back(make_feat(ifeat(37)));
-        if (contains_letters_and_numbers(words[chunk_range.second-1])) result.push_back(make_feat(ifeat(38)));
-        if (is_all_numbers(words[chunk_range.second-1]))               result.push_back(make_feat(ifeat(39)));
-        if (contains_hyphen(words[chunk_range.second-1]))              result.push_back(make_feat(ifeat(40)));
-        if (alternating_caps_in_middle(words[chunk_range.second-1]))   result.push_back(make_feat(ifeat(502)));
+        if (contains_numbers(words_no_positions[chunk_range.second-1]))             result.push_back(make_feat(ifeat(36)));
+        if (contains_letters(words_no_positions[chunk_range.second-1]))             result.push_back(make_feat(ifeat(37)));
+        if (contains_letters_and_numbers(words_no_positions[chunk_range.second-1])) result.push_back(make_feat(ifeat(38)));
+        if (is_all_numbers(words_no_positions[chunk_range.second-1]))               result.push_back(make_feat(ifeat(39)));
+        if (contains_hyphen(words_no_positions[chunk_range.second-1]))              result.push_back(make_feat(ifeat(40)));
+        if (alternating_caps_in_middle(words_no_positions[chunk_range.second-1]))   result.push_back(make_feat(ifeat(502)));
 
         matrix<float,0,1> before, after;
         if (chunk_range.first != 0)
         {
             before = feats[chunk_range.first-1];
-            result.push_back(make_feat(shash(words[chunk_range.first-1],3)));
-            result.push_back(make_feat(shash(stem_word(words[chunk_range.first-1]),13)));
+            result.push_back(make_feat(shash(words_no_positions[chunk_range.first-1],3)));
+            result.push_back(make_feat(shash(stem_word(words_no_positions[chunk_range.first-1]),13)));
 
-            result.push_back(make_feat(prefix(words[chunk_range.first-1],56)));
-            result.push_back(make_feat(suffix(words[chunk_range.first-1],57)));
+            result.push_back(make_feat(prefix(words_no_positions[chunk_range.first-1],56)));
+            result.push_back(make_feat(suffix(words_no_positions[chunk_range.first-1],57)));
 
-            if (is_caps(words[chunk_range.first-1]))                      result.push_back(make_feat(ifeat(60)));
-            if (is_all_caps(words[chunk_range.first-1]))
+            if (is_caps(words_no_positions[chunk_range.first-1]))                      result.push_back(make_feat(ifeat(60)));
+            if (is_all_caps(words_no_positions[chunk_range.first-1]))
             {
                 result.push_back(make_feat(ifeat(61)));
-                if (words[chunk_range.first-1].size() == 1) result.push_back(make_feat(ifeat(6661)));
-                if (words[chunk_range.first-1].size() == 2) result.push_back(make_feat(ifeat(6662)));
-                if (words[chunk_range.first-1].size() == 3) result.push_back(make_feat(ifeat(6663)));
-                if (words[chunk_range.first-1].size() == 4) result.push_back(make_feat(ifeat(6664)));
+                if (words_no_positions[chunk_range.first-1].size() == 1) result.push_back(make_feat(ifeat(6661)));
+                if (words_no_positions[chunk_range.first-1].size() == 2) result.push_back(make_feat(ifeat(6662)));
+                if (words_no_positions[chunk_range.first-1].size() == 3) result.push_back(make_feat(ifeat(6663)));
+                if (words_no_positions[chunk_range.first-1].size() == 4) result.push_back(make_feat(ifeat(6664)));
             }
-            if (contains_numbers(words[chunk_range.first-1]))             result.push_back(make_feat(ifeat(62)));
-            if (contains_letters(words[chunk_range.first-1]))             result.push_back(make_feat(ifeat(63)));
-            if (contains_letters_and_numbers(words[chunk_range.first-1])) result.push_back(make_feat(ifeat(64)));
-            if (is_all_numbers(words[chunk_range.first-1]))               result.push_back(make_feat(ifeat(65)));
-            if (contains_hyphen(words[chunk_range.first-1]))              result.push_back(make_feat(ifeat(66)));
-            if (alternating_caps_in_middle(words[chunk_range.first-1]))   result.push_back(make_feat(ifeat(503)));
+            if (contains_numbers(words_no_positions[chunk_range.first-1]))             result.push_back(make_feat(ifeat(62)));
+            if (contains_letters(words_no_positions[chunk_range.first-1]))             result.push_back(make_feat(ifeat(63)));
+            if (contains_letters_and_numbers(words_no_positions[chunk_range.first-1])) result.push_back(make_feat(ifeat(64)));
+            if (is_all_numbers(words_no_positions[chunk_range.first-1]))               result.push_back(make_feat(ifeat(65)));
+            if (contains_hyphen(words_no_positions[chunk_range.first-1]))              result.push_back(make_feat(ifeat(66)));
+            if (alternating_caps_in_middle(words_no_positions[chunk_range.first-1]))   result.push_back(make_feat(ifeat(503)));
         }
         else
         {
@@ -292,78 +336,78 @@ namespace mitie
 
         if (chunk_range.first > 1)
         {
-            result.push_back(make_feat(shash(words[chunk_range.first-2],103)));
-            result.push_back(make_feat(shash(stem_word(words[chunk_range.first-2]),113)));
+            result.push_back(make_feat(shash(words_no_positions[chunk_range.first-2],103)));
+            result.push_back(make_feat(shash(stem_word(words_no_positions[chunk_range.first-2]),113)));
 
-            result.push_back(make_feat(prefix(words[chunk_range.first-2],156)));
-            result.push_back(make_feat(suffix(words[chunk_range.first-2],157)));
+            result.push_back(make_feat(prefix(words_no_positions[chunk_range.first-2],156)));
+            result.push_back(make_feat(suffix(words_no_positions[chunk_range.first-2],157)));
 
-            if (is_caps(words[chunk_range.first-2]))                      result.push_back(make_feat(ifeat(160)));
-            if (is_all_caps(words[chunk_range.first-2]))
+            if (is_caps(words_no_positions[chunk_range.first-2]))                      result.push_back(make_feat(ifeat(160)));
+            if (is_all_caps(words_no_positions[chunk_range.first-2]))
             {
                 result.push_back(make_feat(ifeat(161)));
-                if (words[chunk_range.first-2].size() == 1) result.push_back(make_feat(ifeat(66161)));
-                if (words[chunk_range.first-2].size() == 2) result.push_back(make_feat(ifeat(66162)));
-                if (words[chunk_range.first-2].size() == 3) result.push_back(make_feat(ifeat(66163)));
-                if (words[chunk_range.first-2].size() == 4) result.push_back(make_feat(ifeat(66164)));
+                if (words_no_positions[chunk_range.first-2].size() == 1) result.push_back(make_feat(ifeat(66161)));
+                if (words_no_positions[chunk_range.first-2].size() == 2) result.push_back(make_feat(ifeat(66162)));
+                if (words_no_positions[chunk_range.first-2].size() == 3) result.push_back(make_feat(ifeat(66163)));
+                if (words_no_positions[chunk_range.first-2].size() == 4) result.push_back(make_feat(ifeat(66164)));
             }
-            if (contains_numbers(words[chunk_range.first-2]))             result.push_back(make_feat(ifeat(162)));
-            if (contains_letters(words[chunk_range.first-2]))             result.push_back(make_feat(ifeat(163)));
-            if (contains_letters_and_numbers(words[chunk_range.first-2])) result.push_back(make_feat(ifeat(164)));
-            if (is_all_numbers(words[chunk_range.first-2]))               result.push_back(make_feat(ifeat(165)));
-            if (contains_hyphen(words[chunk_range.first-2]))              result.push_back(make_feat(ifeat(166)));
-            if (alternating_caps_in_middle(words[chunk_range.first-2]))   result.push_back(make_feat(ifeat(504)));
+            if (contains_numbers(words_no_positions[chunk_range.first-2]))             result.push_back(make_feat(ifeat(162)));
+            if (contains_letters(words_no_positions[chunk_range.first-2]))             result.push_back(make_feat(ifeat(163)));
+            if (contains_letters_and_numbers(words_no_positions[chunk_range.first-2])) result.push_back(make_feat(ifeat(164)));
+            if (is_all_numbers(words_no_positions[chunk_range.first-2]))               result.push_back(make_feat(ifeat(165)));
+            if (contains_hyphen(words_no_positions[chunk_range.first-2]))              result.push_back(make_feat(ifeat(166)));
+            if (alternating_caps_in_middle(words_no_positions[chunk_range.first-2]))   result.push_back(make_feat(ifeat(504)));
         }
 
         if (chunk_range.second+1 < feats.size())
         {
-            result.push_back(make_feat(shash(words[chunk_range.second+1],104)));
-            result.push_back(make_feat(shash(stem_word(words[chunk_range.second+1]),114)));
+            result.push_back(make_feat(shash(words_no_positions[chunk_range.second+1],104)));
+            result.push_back(make_feat(shash(stem_word(words_no_positions[chunk_range.second+1]),114)));
 
-            result.push_back(make_feat(prefix(words[chunk_range.second+1],158)));
-            result.push_back(make_feat(suffix(words[chunk_range.second+1],159)));
+            result.push_back(make_feat(prefix(words_no_positions[chunk_range.second+1],158)));
+            result.push_back(make_feat(suffix(words_no_positions[chunk_range.second+1],159)));
 
-            if (is_caps(words[chunk_range.second+1]))                      result.push_back(make_feat(ifeat(167)));
-            if (is_all_caps(words[chunk_range.second+1]))                  
+            if (is_caps(words_no_positions[chunk_range.second+1]))                      result.push_back(make_feat(ifeat(167)));
+            if (is_all_caps(words_no_positions[chunk_range.second+1]))                  
             {
                 result.push_back(make_feat(ifeat(168)));
-                if (words[chunk_range.second+1].size() == 1) result.push_back(make_feat(ifeat(66168)));
-                if (words[chunk_range.second+1].size() == 2) result.push_back(make_feat(ifeat(66169)));
-                if (words[chunk_range.second+1].size() == 3) result.push_back(make_feat(ifeat(66170)));
-                if (words[chunk_range.second+1].size() == 4) result.push_back(make_feat(ifeat(66171)));
+                if (words_no_positions[chunk_range.second+1].size() == 1) result.push_back(make_feat(ifeat(66168)));
+                if (words_no_positions[chunk_range.second+1].size() == 2) result.push_back(make_feat(ifeat(66169)));
+                if (words_no_positions[chunk_range.second+1].size() == 3) result.push_back(make_feat(ifeat(66170)));
+                if (words_no_positions[chunk_range.second+1].size() == 4) result.push_back(make_feat(ifeat(66171)));
             }
-            if (contains_numbers(words[chunk_range.second+1]))             result.push_back(make_feat(ifeat(169)));
-            if (contains_letters(words[chunk_range.second+1]))             result.push_back(make_feat(ifeat(170)));
-            if (contains_letters_and_numbers(words[chunk_range.second+1])) result.push_back(make_feat(ifeat(171)));
-            if (is_all_numbers(words[chunk_range.second+1]))               result.push_back(make_feat(ifeat(172)));
-            if (contains_hyphen(words[chunk_range.second+1]))              result.push_back(make_feat(ifeat(173)));
-            if (alternating_caps_in_middle(words[chunk_range.second+1]))   result.push_back(make_feat(ifeat(505)));
+            if (contains_numbers(words_no_positions[chunk_range.second+1]))             result.push_back(make_feat(ifeat(169)));
+            if (contains_letters(words_no_positions[chunk_range.second+1]))             result.push_back(make_feat(ifeat(170)));
+            if (contains_letters_and_numbers(words_no_positions[chunk_range.second+1])) result.push_back(make_feat(ifeat(171)));
+            if (is_all_numbers(words_no_positions[chunk_range.second+1]))               result.push_back(make_feat(ifeat(172)));
+            if (contains_hyphen(words_no_positions[chunk_range.second+1]))              result.push_back(make_feat(ifeat(173)));
+            if (alternating_caps_in_middle(words_no_positions[chunk_range.second+1]))   result.push_back(make_feat(ifeat(505)));
         }
 
         if (chunk_range.second < feats.size())
         {
             after = feats[chunk_range.second];
-            result.push_back(make_feat(shash(words[chunk_range.second],4)));
-            result.push_back(make_feat(shash(stem_word(words[chunk_range.second]),14)));
+            result.push_back(make_feat(shash(words_no_positions[chunk_range.second],4)));
+            result.push_back(make_feat(shash(stem_word(words_no_positions[chunk_range.second]),14)));
 
-            result.push_back(make_feat(prefix(words[chunk_range.second],58)));
-            result.push_back(make_feat(suffix(words[chunk_range.second],59)));
+            result.push_back(make_feat(prefix(words_no_positions[chunk_range.second],58)));
+            result.push_back(make_feat(suffix(words_no_positions[chunk_range.second],59)));
 
-            if (is_caps(words[chunk_range.second]))                      result.push_back(make_feat(ifeat(67)));
-            if (is_all_caps(words[chunk_range.second]))                  
+            if (is_caps(words_no_positions[chunk_range.second]))                      result.push_back(make_feat(ifeat(67)));
+            if (is_all_caps(words_no_positions[chunk_range.second]))                  
             {
                 result.push_back(make_feat(ifeat(68)));
-                if (words[chunk_range.second].size() == 1) result.push_back(make_feat(ifeat(6668)));
-                if (words[chunk_range.second].size() == 2) result.push_back(make_feat(ifeat(6669)));
-                if (words[chunk_range.second].size() == 3) result.push_back(make_feat(ifeat(6670)));
-                if (words[chunk_range.second].size() == 4) result.push_back(make_feat(ifeat(6671)));
+                if (words_no_positions[chunk_range.second].size() == 1) result.push_back(make_feat(ifeat(6668)));
+                if (words_no_positions[chunk_range.second].size() == 2) result.push_back(make_feat(ifeat(6669)));
+                if (words_no_positions[chunk_range.second].size() == 3) result.push_back(make_feat(ifeat(6670)));
+                if (words_no_positions[chunk_range.second].size() == 4) result.push_back(make_feat(ifeat(6671)));
             }
-            if (contains_numbers(words[chunk_range.second]))             result.push_back(make_feat(ifeat(69)));
-            if (contains_letters(words[chunk_range.second]))             result.push_back(make_feat(ifeat(70)));
-            if (contains_letters_and_numbers(words[chunk_range.second])) result.push_back(make_feat(ifeat(71)));
-            if (is_all_numbers(words[chunk_range.second]))               result.push_back(make_feat(ifeat(72)));
-            if (contains_hyphen(words[chunk_range.second]))              result.push_back(make_feat(ifeat(73)));
-            if (alternating_caps_in_middle(words[chunk_range.second]))   result.push_back(make_feat(ifeat(506)));
+            if (contains_numbers(words_no_positions[chunk_range.second]))             result.push_back(make_feat(ifeat(69)));
+            if (contains_letters(words_no_positions[chunk_range.second]))             result.push_back(make_feat(ifeat(70)));
+            if (contains_letters_and_numbers(words_no_positions[chunk_range.second])) result.push_back(make_feat(ifeat(71)));
+            if (is_all_numbers(words_no_positions[chunk_range.second]))               result.push_back(make_feat(ifeat(72)));
+            if (contains_hyphen(words_no_positions[chunk_range.second]))              result.push_back(make_feat(ifeat(73)));
+            if (alternating_caps_in_middle(words_no_positions[chunk_range.second]))   result.push_back(make_feat(ifeat(506)));
         }
         else
         {
