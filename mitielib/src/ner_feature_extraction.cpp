@@ -226,9 +226,7 @@ namespace mitie
         for (unsigned long i = chunk_range.first; i < chunk_range.second; ++i)
         {
             int word_position = get_word_position(words[i]);
-            cout << word_position << " | " << words[i] << " | ";
             std::string current_word = remove_position(words[i]); 
-            cout << current_word << endl;
             all_sum += feats[i];
             result.push_back(make_feat(shash(current_word,0)));
             result.push_back(make_feat(shash(stem_word(current_word),10)));
